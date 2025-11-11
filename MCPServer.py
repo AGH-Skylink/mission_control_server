@@ -6,6 +6,13 @@ import numpy as np
 import sounddevice as sd
 from test.MCPTesting import DEFAULT_COMMAND_SET, ServerInterruptMockup
 from src.MCPClient import ServerUser
+from enum import Enum
+
+
+class RoutingStatus(Enum):
+    DISCONNECTED = 0
+    CONNECTED = 1
+    PRIORITY = 2
 
 
 class ServerLockBank:
@@ -29,7 +36,11 @@ class MainServer:
     :ivar __active_threads: a set of threads to stop once the server is shut down
     :type __active_threads: set[threading.Thread]
     :ivar __command_set: a list of commands sent from client to the server
-    :type __command_set: list[Callable]"""
+    :type __command_set: list[Callable]
+    :ivar __downlink_routing_table: permission for listening to channels
+    :type __downlink_routing_table: list[list[RoutingStatus]]
+    :ivar __uplink_routing_table: permission for talking on channels
+    :type __uplink_routing_table: list[list[RoutingStatus]]"""
 
     # A reference for running MainServer instance
     MAIN_SERVER = None
@@ -37,9 +48,14 @@ class MainServer:
     def __init__(self):
         self.STOP_SERVER = threading.Event()
         self.__max_users = 2
+        self.__channels = 4
         self.__active_users = [None for _ in range(self.__max_users)]
         self.__active_threads = set()
         self.__command_set = DEFAULT_COMMAND_SET
+        self.__downlink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.__max_users)] for _ in
+                                         range(self.__channels)]
+        self.__uplink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.__max_users)] for _ in
+                                       range(self.__channels)]
         self.communication_port = 9000
         self.lock_bank = ServerLockBank()
         MainServer.MAIN_SERVER = self
@@ -121,6 +137,50 @@ class MainServer:
             with self.lock_bank.active_threads_lock:
                 if type(self.__active_users[i]) == ServerUser and self.__active_users[i].id == user.id:
                     self.__active_users[i] = None
+                    return
+        raise KeyError(f"User {user.id} not found")
+
+    def set_downlink_routing_status(self, channel: int, user:ServerUser, status: RoutingStatus) -> None:
+        """Change user's status in downlink routing table.
+        :param channel: channel's number
+        :type channel: int
+        :param user: user to change status
+        :type channel: ServerUser
+        :param status: new user's status
+        :type channel: RoutingStatus
+        "return None:"""
+        if channel not in range(self.__channels):
+            raise ValueError(f"Channel {channel} is incorrect")
+        if not isinstance(user, ServerUser):
+            raise TypeError(f"User must be type ServerUser, not {type(user)}")
+        if not isinstance(status, RoutingStatus):
+            raise TypeError(f"Status must be type RoutingStatus, not {type(status)}")
+        for i in range(self.__max_users):
+            with self.lock_bank.active_users_lock:
+                if type(self.__active_users[i]) == ServerUser and self.__active_users[i].id == user.id:
+                    self.__downlink_routing_table[channel][i] = status
+                    return
+        raise KeyError(f"User {user.id} not found")
+
+    def set_uplink_routing_status(self, channel: int, user:ServerUser, status: RoutingStatus) -> None:
+        """Change user's status in uplink routing table.
+        :param channel: channel's number
+        :type channel: int
+        :param user: user to change status
+        :type channel: ServerUser
+        :param status: new user's status
+        :type channel: RoutingStatus
+        return: None"""
+        if channel not in range(self.__channels):
+            raise ValueError(f"Channel {channel} is incorrect")
+        if not isinstance(user, ServerUser):
+            raise TypeError(f"User must be type ServerUser, not {type(user)}")
+        if not isinstance(status, RoutingStatus):
+            raise TypeError(f"Status must be type RoutingStatus, not {type(status)}")
+        for i in range(self.__max_users):
+            with self.lock_bank.active_users_lock:
+                if type(self.__active_users[i]) == ServerUser and self.__active_users[i].id == user.id:
+                    self.__uplink_routing_table[channel][i] = status
                     return
         raise KeyError(f"User {user.id} not found")
 
