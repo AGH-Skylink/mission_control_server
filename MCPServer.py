@@ -45,10 +45,13 @@ class MainServer:
     # A reference for running MainServer instance
     MAIN_SERVER = None
 
-    def __init__(self):
+    def __init__(self, config_file: str):
+        with open(config_file, "r", encoding="utf-8") as config_json:
+            config = json.load(config_json)
+        check_config(config)
         self.STOP_SERVER = threading.Event()
-        self.__max_users = 2
-        self.__channels = 4
+        self.__max_users = config["max_users"]
+        self.__channels = config["channels"]
         self.__active_users = [None for _ in range(self.__max_users)]
         self.__active_threads = set()
         self.__command_set = DEFAULT_COMMAND_SET
@@ -56,7 +59,7 @@ class MainServer:
                                          range(self.__channels)]
         self.__uplink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.__max_users)] for _ in
                                        range(self.__channels)]
-        self.communication_port = 9000
+        self.communication_port = config["communication_port"]
         self.lock_bank = ServerLockBank()
         MainServer.MAIN_SERVER = self
 
@@ -256,9 +259,16 @@ def user_handler(websocket: websockets.sync.server.ServerConnection) -> None:
         except KeyError as exception:
             print(exception)
 
+def check_config(config: dict) -> None:
+    for param, ptype in [("max_users", int), ("channels", int), ("communication_port", int)]:
+        if param not in config:
+            raise KeyError(f"Missing configuration parameter: {param}")
+        if type(config[param]) != ptype:
+            raise KeyError(f"{param} must be {ptype}, not {type(config[param])}")
+
 
 def main() -> None:
-    control_panel_server = MainServer()
+    control_panel_server = MainServer("test_config.json")
     control_panel_server.run()
 
 
