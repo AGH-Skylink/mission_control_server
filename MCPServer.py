@@ -4,9 +4,10 @@ import threading
 import json
 import numpy as np
 import sounddevice as sd
-from test.MCPTesting import DEFAULT_COMMAND_SET, ServerInterruptMockup
-from src.MCPClient import ServerUser
+from test.MCPTesting import ServerInterruptMockup
+from src.MCPClient import DEFAULT_COMMAND_SET, ServerUser
 from enum import Enum
+from queue import Queue
 
 
 class RoutingStatus(Enum):
@@ -53,6 +54,7 @@ class MainServer:
         self.__max_users = config["max_users"]
         self.__channels = config["channels"]
         self.__active_users = [None for _ in range(self.__max_users)]
+        self.received_audio_buffers = [Queue(maxsize=10) for _ in range(self.__max_users)]
         self.__active_threads = set()
         self.__command_set = DEFAULT_COMMAND_SET
         self.__downlink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.__max_users)] for _ in
@@ -138,10 +140,10 @@ class MainServer:
         :return: None"""
         for i in range(self.__max_users):
             with self.lock_bank.active_threads_lock:
-                if type(self.__active_users[i]) == ServerUser and self.__active_users[i].id == user.id:
+                if type(self.__active_users[i]) == ServerUser and self.__active_users[i] == user:
                     self.__active_users[i] = None
                     return
-        raise KeyError(f"User {user.id} not found")
+        raise KeyError(f"User {user} not found")
 
     def set_downlink_routing_status(self, channel: int, user:ServerUser, status: RoutingStatus) -> None:
         """Change user's status in downlink routing table.
@@ -151,7 +153,7 @@ class MainServer:
         :type channel: ServerUser
         :param status: new user's status
         :type channel: RoutingStatus
-        "return None:"""
+        :return None:"""
         if channel not in range(self.__channels):
             raise ValueError(f"Channel {channel} is incorrect")
         if not isinstance(user, ServerUser):
@@ -160,10 +162,10 @@ class MainServer:
             raise TypeError(f"Status must be type RoutingStatus, not {type(status)}")
         for i in range(self.__max_users):
             with self.lock_bank.active_users_lock:
-                if type(self.__active_users[i]) == ServerUser and self.__active_users[i].id == user.id:
+                if type(self.__active_users[i]) == ServerUser and self.__active_users[i] == user:
                     self.__downlink_routing_table[channel][i] = status
                     return
-        raise KeyError(f"User {user.id} not found")
+        raise KeyError(f"User {user} not found")
 
     def set_uplink_routing_status(self, channel: int, user:ServerUser, status: RoutingStatus) -> None:
         """Change user's status in uplink routing table.
@@ -182,10 +184,10 @@ class MainServer:
             raise TypeError(f"Status must be type RoutingStatus, not {type(status)}")
         for i in range(self.__max_users):
             with self.lock_bank.active_users_lock:
-                if type(self.__active_users[i]) == ServerUser and self.__active_users[i].id == user.id:
+                if type(self.__active_users[i]) == ServerUser and self.__active_users[i] == user:
                     self.__uplink_routing_table[channel][i] = status
                     return
-        raise KeyError(f"User {user.id} not found")
+        raise KeyError(f"User {user} not found")
 
 
 class ServerListener(threading.Thread):
@@ -200,7 +202,7 @@ class ServerListener(threading.Thread):
     def run(self) -> None:
         """A program thread running after start.
         :return None:"""
-        with serve(user_handler, "localhost", MainServer.MAIN_SERVER.communication_port) as server_listener:
+        with serve(user_handler, "192.168.0.19", MainServer.MAIN_SERVER.communication_port) as server_listener:
             self.server_listener = server_listener
             server_listener.serve_forever()
 
@@ -216,7 +218,10 @@ def user_handler(websocket: websockets.sync.server.ServerConnection) -> None:
     :param websocket: an object representing a connection with one client
     :type websocket: websockets.sync.server.ServerConnection
     :return None:"""
-    user = ServerUser()
+    print(websocket.remote_address)
+    ip_addr, port = websocket.remote_address
+    user = ServerUser(ip_addr, port)
+    print(user)
     try:
         iden = MainServer.MAIN_SERVER.add_user(user)
     except OverflowError:
@@ -224,8 +229,8 @@ def user_handler(websocket: websockets.sync.server.ServerConnection) -> None:
         response = json.dumps({"command": -1, "result": None})
         websocket.send(response)
         return
-    user.id = iden
-    print(f"Client <{user.id}, {user.name}> connected")
+    user.server_id = iden
+    print(f"Client <{iden}, {user.name}> connected")
     instruction_list = DEFAULT_COMMAND_SET
     try:
         for message in websocket:
@@ -234,15 +239,14 @@ def user_handler(websocket: websockets.sync.server.ServerConnection) -> None:
             if isinstance(message, str):
                 message = json.loads(message)
                 if "command" in message:
-                    result = instruction_list[message["command"]](message["data"])
+                    result = instruction_list[message["command"]](message["data"], user)
                     response = json.dumps({"command": message["command"], "result": result})
                 else:
                     response = json.dumps({"command": -1, "result": None})
                 websocket.send(response)
             elif isinstance(message, bytes):
                 websocket.send("Sound received")
-                sd.play(np.frombuffer(message, dtype='int16'), samplerate=44100)
-                sd.wait()
+                MainServer.MAIN_SERVER.received_audio_buffers[user.server_id].put_nowait(message)
             else:
                 raise TypeError(f"Incorrect message type: {type(message)}")
     except websockets.exceptions.ConnectionClosedOK:
@@ -260,6 +264,10 @@ def user_handler(websocket: websockets.sync.server.ServerConnection) -> None:
             print(exception)
 
 def check_config(config: dict) -> None:
+    """Checks the server's configuration from JSON file.
+    :param config: server configuration
+    :type config: dict
+    """
     for param, ptype in [("max_users", int), ("channels", int), ("communication_port", int)]:
         if param not in config:
             raise KeyError(f"Missing configuration parameter: {param}")

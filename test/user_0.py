@@ -4,9 +4,9 @@ import json
 
 
 def main():
-    with connect("ws://localhost:9000") as websocket:
+    with connect("ws://192.168.0.19:9000") as websocket:
         while True:
-            message = {"command": 0, "data": [2,3]}
+            message = {"command": 0, "data": "test"}
             message_json = json.dumps(message)
             websocket.send(message_json)
             time.sleep(1)

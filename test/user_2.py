@@ -4,7 +4,7 @@ import sounddevice as sd
 
 
 def main():
-    with connect("ws://localhost:9000") as websocket:
+    with connect("ws://192.168.0.19:9000") as websocket:
         while True:
             audio = sd.rec(88200, samplerate=44100, channels=1, dtype='int16')
             sd.wait()
