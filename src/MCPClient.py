@@ -7,19 +7,29 @@ import socket
 
 
 class ServerUser:
-    def __init__(self, ip_addr: str, port: int, server_id: int| None = None, name: str | None = None):
-        self.name = name
-        if len(ip_addr) < 10 or ip_addr[:10] != "192.168.0.":
-            raise ValueError(f"Invalid IP address - {ip_addr}")
-        self.connection_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.connection_socket.bind((ip_addr, port))
+    def __init__(self, ip_addr: str, port: int, websocket: websockets.sync.server.ServerConnection,
+                 server_id: int | None = None, name: str | None = None):
         self.server_id = server_id
+        self.name = name
+        if (len(ip_addr) < 10 or ip_addr[:10] != "192.168.0.") and ip_addr != "127.0.0.1":
+            raise ValueError(f"Invalid IP address - {ip_addr}")
+        self.websocket = websocket
+        self.tcp_address = (ip_addr, port)
+        self.udp_address = (ip_addr, None)
+        header = bytes()
+        for num in [int(x) for x in ip_addr.split(".")]:
+            header += num.to_bytes(1, byteorder='little')
+        self.header = header
 
     def __repr__(self) -> str:
-        return f"({self.name}, {self.connection_socket.getsockname()})"
+        return f"({self.name}, {self.tcp_address})"
 
     def __eq__(self, other) -> bool:
-        return self.connection_socket.getsockname() == other.connection_socket.getsockname()
+        return self.tcp_address == other.tcp_address
+
+    def close_websocket(self) -> None:
+        self.websocket.close()
+
 
 def instruction0(data: str, user: ServerUser) -> None:
     """Instruction 0 - set a user's name
@@ -39,5 +49,6 @@ def instruction1(data: str, user: ServerUser):
 
 def instruction2(data: str, user: ServerUser):
     return data
+
 
 DEFAULT_COMMAND_SET = [instruction0, instruction1, instruction2]
