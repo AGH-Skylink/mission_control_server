@@ -36,18 +36,18 @@ class ServerLockBank:
 
 class MainServer:
     """An object representing server.
-    :ivar __max_users: the maximal number of users server can handle simultaneously
-    :type __max_users: int
+    :ivar max_users: the maximal number of users server can handle simultaneously
+    :type max_users: int
     :ivar active_users: an array of references to active users object instances
     :type active_users: list[ServerUser | None]
     :ivar __active_threads: a set of threads to stop once the server is shut down
     :type __active_threads: set[threading.Thread]
     :ivar __command_set: a list of commands sent from client to the server
     :type __command_set: list[Callable]
-    :ivar __downlink_routing_table: permission for listening to channels
-    :type __downlink_routing_table: list[list[RoutingStatus]]
-    :ivar __uplink_routing_table: permission for talking on channels
-    :type __uplink_routing_table: list[list[RoutingStatus]]"""
+    :ivar downlink_routing_table: permission for listening to channels
+    :type downlink_routing_table: list[list[RoutingStatus]]
+    :ivar uplink_routing_table: permission for talking on channels
+    :type uplink_routing_table: list[list[RoutingStatus]]"""
 
     # A reference for running MainServer instance
     MAIN_SERVER = None
@@ -57,18 +57,22 @@ class MainServer:
             config = json.load(config_json)
         check_config(config)
         self.STOP_SERVER = threading.Event()
-        self.__max_users = config["max_users"]
-        self.__channels = config["channels"]
-        self.active_users = [None for _ in range(self.__max_users)]
-        self.received_audio_buffers = [Queue(maxsize=100) for _ in range(self.__max_users)]
+        self.max_users = config["max_users"]
+        self.channels = config["channels"]
+        self.active_users = [None for _ in range(self.max_users)]
+        self.received_audio_buffers = [Queue(maxsize=100) for _ in range(self.max_users)]
+        self.transmitted_audio_buffers = [Queue(maxsize=100) for _ in range(self.channels)]
         self.__active_threads = set()
         self.__command_set = DEFAULT_COMMAND_SET
-        self.__downlink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.__max_users)] for _ in
-                                         range(self.__channels)]
-        self.__uplink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.__max_users)] for _ in
-                                       range(self.__channels)]
+        self.downlink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.max_users)] for _ in
+                                       range(self.channels)]
+        self.uplink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.max_users)] for _ in
+                                     range(self.channels)]
         self.ip_address = config["ip_address"]
         self.communication_port = config["communication_port"]
+        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.udp_socket.settimeout(1)
+        self.udp_socket.bind((self.ip_address, self.communication_port))
         self.lock_bank = ServerLockBank()
         MainServer.MAIN_SERVER = self
 
@@ -79,12 +83,15 @@ class MainServer:
         server_listener = ServerListener()
         server_listener.start()
         self.add_thread(server_listener)
-        audio_receiver = AudioReceiver(self.ip_address, self.communication_port)
+        audio_receiver = AudioReceiver(self.udp_socket)
         audio_receiver.start()
         self.add_thread(audio_receiver)
         audio_player = AudioPlayer()
         audio_player.start()
         self.add_thread(audio_player)
+        audio_transmitter = AudioTransmitter(self.udp_socket)
+        audio_transmitter.start()
+        self.add_thread(audio_transmitter)
         # for testing purposes only
         server_interrupt_mockup = ServerInterruptMockup(MainServer.MAIN_SERVER)
         server_interrupt_mockup.start()
@@ -145,7 +152,7 @@ class MainServer:
         :type user: ServerUser
         :return: user id on this server
         :rtype: int"""
-        for i in range(self.__max_users):
+        for i in range(self.max_users):
             with self.lock_bank.active_threads_lock:
                 if self.active_users[i] is None:
                     self.active_users[i] = user
@@ -157,7 +164,7 @@ class MainServer:
         :param user: the user to remove
         :type user: ServerUser
         :return: None"""
-        for i in range(self.__max_users):
+        for i in range(self.max_users):
             with self.lock_bank.active_threads_lock:
                 if type(self.active_users[i]) == ServerUser and self.active_users[i] == user:
                     self.active_users[i].close_websocket()
@@ -174,16 +181,16 @@ class MainServer:
         :param status: new user's status
         :type channel: RoutingStatus
         :return None:"""
-        if channel not in range(self.__channels):
+        if channel not in range(self.channels):
             raise ValueError(f"Channel {channel} is incorrect")
         if not isinstance(user, ServerUser):
             raise TypeError(f"User must be type ServerUser, not {type(user)}")
         if not isinstance(status, RoutingStatus):
             raise TypeError(f"Status must be type RoutingStatus, not {type(status)}")
-        for i in range(self.__max_users):
+        for i in range(self.max_users):
             with self.lock_bank.active_users_lock:
                 if type(self.active_users[i]) == ServerUser and self.active_users[i] == user:
-                    self.__downlink_routing_table[channel][i] = status
+                    self.downlink_routing_table[channel][i] = status
                     return
         raise KeyError(f"User {user} not found")
 
@@ -196,16 +203,16 @@ class MainServer:
         :param status: new user's status
         :type channel: RoutingStatus
         return: None"""
-        if channel not in range(self.__channels):
+        if channel not in range(self.channels):
             raise ValueError(f"Channel {channel} is incorrect")
         if not isinstance(user, ServerUser):
             raise TypeError(f"User must be type ServerUser, not {type(user)}")
         if not isinstance(status, RoutingStatus):
             raise TypeError(f"Status must be type RoutingStatus, not {type(status)}")
-        for i in range(self.__max_users):
+        for i in range(self.max_users):
             with self.lock_bank.active_users_lock:
                 if type(self.active_users[i]) == ServerUser and self.active_users[i] == user:
-                    self.__uplink_routing_table[channel][i] = status
+                    self.uplink_routing_table[channel][i] = status
                     return
         raise KeyError(f"User {user} not found")
 
@@ -239,24 +246,21 @@ class AudioReceiver(threading.Thread):
     :ivar udp_socket: a socket receiving audio from users
     :type udp_socket: socket.socket"""
 
-    def __init__(self, local_ip: str, local_port: int):
+    def __init__(self, udp_socket: socket.socket):
         super().__init__()
         self.is_active = True
-        self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.udp_socket.settimeout(1)
-        self.udp_socket.bind((local_ip, local_port))
+        self.udp_socket = udp_socket
 
     def run(self) -> None:
         """A program thread running after start.
         :return None:"""
         while self.is_active:
             try:
-                data, address = self.udp_socket.recvfrom(2052)
-                print(address)
-                header, message = data[:4], data[4:]
+                message, address = self.udp_socket.recvfrom(2048)
+                header = address[0]
                 with MainServer.MAIN_SERVER.lock_bank.active_users_lock:
                     for user in MainServer.MAIN_SERVER.active_users:
-                        if user is not None and user.header == header:
+                        if user is not None and user.ip_address == header:
                             MainServer.MAIN_SERVER.received_audio_buffers[user.server_id].put_nowait(message)
                             # print(user.server_id)
                             break
@@ -264,6 +268,41 @@ class AudioReceiver(threading.Thread):
                         print(f"Received package from unknown user: {address}")
             except socket.timeout:
                 pass
+            except OSError as exception:
+                print(exception)
+
+    def stop(self) -> None:
+        """A program thread executed when server is stopped.
+        :return None:"""
+        self.is_active = False
+        print(f"Thread {self} stopped")
+
+
+class AudioTransmitter(threading.Thread):
+    """A thread transmitting an audio from channels to users.
+    :ivar udp_socket: a socket transmitting audio to users
+    :type udp_socket: socket.socket"""
+
+    def __init__(self, udp_socket: socket.socket):
+        super().__init__()
+        self.is_active = True
+        self.udp_socket = udp_socket
+
+    def run(self) -> None:
+        """A program thread running after start.
+        :return None:"""
+        while self.is_active:
+            for i in range(MainServer.MAIN_SERVER.channels):
+                # print("Getting audio from channel", i)
+                if not MainServer.MAIN_SERVER.transmitted_audio_buffers[i].empty():
+                    data = MainServer.MAIN_SERVER.transmitted_audio_buffers[i].get_nowait()
+                    # print("Getting audio from channel", i)
+                    for j in range(MainServer.MAIN_SERVER.max_users):
+                        with MainServer.MAIN_SERVER.lock_bank.active_users_lock:
+                            if (MainServer.MAIN_SERVER.active_users[i] is not None
+                                    and MainServer.MAIN_SERVER.downlink_routing_table[i][j]
+                                    in [RoutingStatus.CONNECTED, RoutingStatus.PRIORITY]):
+                                self.udp_socket.sendto(data, MainServer.MAIN_SERVER.active_users[i].udp_address)
 
     def stop(self) -> None:
         """A program thread executed when server is stopped.
@@ -277,15 +316,20 @@ class AudioPlayer(threading.Thread):
 
     def __init__(self):
         self.is_active = True
+        MainServer.MAIN_SERVER.downlink_routing_table[0][0] = RoutingStatus.CONNECTED
         super().__init__()
 
     def run(self):
         stream_out = audio.open(format=pyaudio.paInt16, channels=1, rate=44100, output=True, frames_per_buffer=1024)
         # time.sleep(10)
         while self.is_active:
+            """if not MainServer.MAIN_SERVER.received_audio_buffers[0].empty():
+                data = MainServer.MAIN_SERVER.received_audio_buffers[0].get_nowait()
+                stream_out.write(data)"""
             if not MainServer.MAIN_SERVER.received_audio_buffers[0].empty():
                 data = MainServer.MAIN_SERVER.received_audio_buffers[0].get_nowait()
-                stream_out.write(data)
+                # print(MainServer.MAIN_SERVER.received_audio_buffers[0].qsize())
+                MainServer.MAIN_SERVER.transmitted_audio_buffers[0].put_nowait(data)
 
     def stop(self):
         self.is_active = False
@@ -299,7 +343,7 @@ def user_handler(websocket: websockets.sync.server.ServerConnection) -> None:
     :return None:"""
     # print(websocket.remote_address)
     ip_addr, port = websocket.remote_address
-    user = ServerUser(ip_addr, port, websocket)
+    user = ServerUser(ip_addr, 9001, websocket)
     # print(user)
     try:
         iden = MainServer.MAIN_SERVER.add_user(user)

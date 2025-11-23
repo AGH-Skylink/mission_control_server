@@ -24,7 +24,7 @@ def main():
         print()
         for _ in range(9000):
             data = stream_in.read(1024, exception_on_overflow=False)
-            sock.sendto(header + data, (udp_remote_ip, udp_remote_port))
+            sock.sendto(data, (udp_remote_ip, udp_remote_port))
         while True:
             pass
 

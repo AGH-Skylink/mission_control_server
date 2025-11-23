@@ -13,19 +13,15 @@ class ServerUser:
         self.name = name
         if (len(ip_addr) < 10 or ip_addr[:10] != "192.168.0.") and ip_addr != "127.0.0.1":
             raise ValueError(f"Invalid IP address - {ip_addr}")
+        self.ip_address = ip_addr
+        self.udp_address = (ip_addr, port)
         self.websocket = websocket
-        self.tcp_address = (ip_addr, port)
-        self.udp_address = (ip_addr, None)
-        header = bytes()
-        for num in [int(x) for x in ip_addr.split(".")]:
-            header += num.to_bytes(1, byteorder='little')
-        self.header = header
 
     def __repr__(self) -> str:
-        return f"({self.name}, {self.tcp_address})"
+        return f"({self.name}, {self.ip_address})"
 
     def __eq__(self, other) -> bool:
-        return self.tcp_address == other.tcp_address
+        return self.ip_address == other.ip_address
 
     def close_websocket(self) -> None:
         self.websocket.close()
