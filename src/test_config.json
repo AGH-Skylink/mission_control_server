@@ -1,0 +1,12 @@
+{
+    "max_users": 2,
+    "channels": 4,
+    "ip_address": "localhost",
+    "communication_port": 9000,
+    "whitelist": ["127.0.0.1", "192.168.0.19", "192.168.0.18", "192.168.0.26"],
+    "remote_communication_port": 9001,
+    "transmitted_audio_buffer_size":  100,
+    "received_audio_buffer_size":  100,
+    "manager_command_buffer_size":  10,
+    "server_request_buffer_size":  10
+}

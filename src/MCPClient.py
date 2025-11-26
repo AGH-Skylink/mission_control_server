@@ -5,8 +5,10 @@ import numpy as np
 import sounddevice as sd
 import socket
 
+#import MCPServer
 
-class ServerUser:
+
+"""class ServerUser:
     def __init__(self, ip_addr: str, port: int, websocket: websockets.sync.server.ServerConnection,
                  server_id: int | None = None, name: str | None = None):
         self.server_id = server_id
@@ -27,24 +29,27 @@ class ServerUser:
         self.websocket.close()
 
 
-def instruction0(data: str, user: ServerUser) -> None:
-    """Instruction 0 - set a user's name
+def client_instruction0(data: str, user: ServerUser) -> None:
+    Instruction 0 - set a user's name
     :param data: user's new name
     :type data: str
     :param user: user object
     :type user: ServerUser
-    :return: None"""
+    :return: None
     if not isinstance(data, str):
         raise TypeError(f"Instruction 0 - data must be str, not {type(data)}")
     user.name = data
+    print(user)
 
 
-def instruction1(data: str, user: ServerUser):
+def client_instruction1(data: dict, user: ServerUser):
+    Instruction 1 - a PTT request
+    MCPServer.MainServer.MAIN_SERVER.server_request_buffer.put_nowait({"command": 1, "data": data})
+
+
+def client_instruction2(data: str, user: ServerUser):
+    Instruction 2 - test ping
     return data
 
 
-def instruction2(data: str, user: ServerUser):
-    return data
-
-
-DEFAULT_COMMAND_SET = [instruction0, instruction1, instruction2]
+DEFAULT_CLIENT_COMMAND_SET = [client_instruction0, client_instruction1, client_instruction2]"""
