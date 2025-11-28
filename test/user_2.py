@@ -13,7 +13,7 @@ udp_remote_port = 9000
 def main():
     with connect(tcp_remote_address) as websocket:
         audio = pyaudio.PyAudio()
-        stream_in = audio.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True, frames_per_buffer=1024)
+        stream_in = audio.open(format=pyaudio.paInt16, channels=2, rate=44100, input=True, frames_per_buffer=1024)
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.bind((udp_local_ip, udp_local_port))
         time.sleep(2)

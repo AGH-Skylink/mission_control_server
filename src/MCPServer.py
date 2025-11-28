@@ -163,6 +163,7 @@ class MainServer:
         self.ip_address = config["ip_address"]
         self.communication_port = config["communication_port"]
         self.remote_communication_port = config["remote_communication_port"]
+        self.audio_chunk_size = config["audio_chunk_size"]
         self.udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp_socket.settimeout(1)
         self.udp_socket.bind((self.ip_address, self.communication_port))
@@ -323,6 +324,17 @@ class MainServer:
             raise Full(f"Manager command buffer overflow, discarded: {discard}")
         self.manager_command_buffer.put_nowait({"command": 1, "data": command})
 
+    def audio_to_buffer(self, audio_chunk: bytes, channel: int) -> None:
+        if channel not in range(self.channels):
+            raise ValueError(f"Channel {channel} is incorrect")
+        self.transmitted_audio_buffers[channel].put_nowait(audio_chunk)
+
+    def audio_from_buffer(self, user_ip: str) -> bytes:
+        with self.lock_bank.active_users_lock:
+            for i in range(self.max_users):
+                if self.active_users[i] is not None and self.active_users[i].ip_address == user_ip:
+                    return self.received_audio_buffers[i].get_nowait()
+        raise KeyError(f"User {user_ip} not found")
 
 
 class ServerListener(threading.Thread):
@@ -364,7 +376,7 @@ class AudioReceiver(threading.Thread):
         :return None:"""
         while self.is_active:
             try:
-                message, address = self.udp_socket.recvfrom(2048)
+                message, address = self.udp_socket.recvfrom(MainServer.MAIN_SERVER.audio_chunk_size)
                 header = address[0]
                 with MainServer.MAIN_SERVER.lock_bank.active_users_lock:
                     for user in MainServer.MAIN_SERVER.active_users:
@@ -486,7 +498,7 @@ def check_config(config: dict) -> None:
     for param, ptype in [("max_users", int), ("channels", int), ("ip_address", str), ("communication_port", int),
                          ("transmitted_audio_buffer_size", int), ("received_audio_buffer_size", int),
                          ("manager_command_buffer_size", int), ("server_request_buffer_size", int),
-                         ("remote_communication_port", int), ("whitelist", list)]:
+                         ("remote_communication_port", int), ("whitelist", list), ("audio_chunk_size", int)]:
         if param not in config:
             raise KeyError(f"Missing configuration parameter: {param}")
         if type(config[param]) != ptype:

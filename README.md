@@ -13,8 +13,9 @@ To give server a command while running call:
 
 *main_server.execute_manager_command(command)*
 
-To find the command's form check *manager_instructions*.
-To find the client's requests check *client_instructions*
+To find the command's form, check *Manager Instructions*.
+To find the client's requests, check *Client Instructions*
+To find information about audio handling, check *Audio Handling*
 
 # Manager Instructions
 - manager_instruction0: stop the server
@@ -34,3 +35,7 @@ To find the client's requests check *client_instructions*
     "data" form could be other, it depends mostly on manager requirements
 - client_instruction2: a test ping - sends back the same message
     example {"command": 2, "data": "Litwo ojczyno moja..."}
+
+# Audio Handling
+- to take audio from specific user, use *main_server.audio_from_buffer(<user_ip>)*
+- to load audio from specific channel (to transmit it tp the users), use *main_server.audio_to_buffer(<channel>)*
