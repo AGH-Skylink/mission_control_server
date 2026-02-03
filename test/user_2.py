@@ -5,7 +5,7 @@ import socket
 
 udp_local_ip = "127.0.0.1"
 udp_remote_ip = "127.0.0.1"
-udp_local_port = 9001
+udp_local_port = 9102
 udp_remote_port = 9000
 
 samplerate = 44100
