@@ -1,7 +1,7 @@
 {
     "max_users": 2,
     "channels": 4,
-    "ip_address": "localhost",
+    "ip_address": "127.0.0.1",
     "communication_port": 9000,
     "whitelist": ["127.0.0.1", "192.168.0.19", "192.168.0.18", "192.168.0.26"],
     "remote_communication_port": 9001,

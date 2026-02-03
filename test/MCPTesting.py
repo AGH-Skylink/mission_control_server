@@ -1,7 +1,12 @@
+# TO DELETE
 import threading
 import time
-import pyaudio
+import sounddevice as sd
 from queue import Queue
+
+samplerate = 44100
+blocksize = 1024
+channels = 1
 
 
 class AudioPlayer(threading.Thread):
@@ -13,9 +18,10 @@ class AudioPlayer(threading.Thread):
         super().__init__()
 
     def run(self):
-        audio = pyaudio.PyAudio()
-        stream_in = audio.open(format=pyaudio.paInt16, channels=1, rate=44100, input=True, frames_per_buffer=1024)
-        stream_out = audio.open(format=pyaudio.paInt16, channels=1, rate=44100, output=True, frames_per_buffer=1024)
+        stream_in = sd.InputStream(samplerate=samplerate, channels=channels, dtype='int16', blocksize=blocksize)
+        stream_out = sd.OutputStream(samplerate=samplerate, channels=channels, dtype='int16', blocksize=blocksize)
+        stream_in.start()
+        stream_out.start()
         buuuuf0 = Queue(maxsize=10)
         buuuuf1 = Queue(maxsize=10)
         # time.sleep(10)
@@ -50,7 +56,7 @@ class AudioPlayer(threading.Thread):
     def stop(self):
         self.is_active = False
         print(f"Thread {self} stopped")
-        
+
 
 class ServerInterruptMockup(threading.Thread):
     """A thread stopping server after certain time, for testing purposes."""
