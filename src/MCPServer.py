@@ -4,17 +4,44 @@ from enum import Enum
 
 
 class ServerUserSocket:
+    """An object representing free or occupied slot for tablet
+    :ivar main_server: the main server reference
+    :type main_server: MainServer
+    :ivar ip_address: the IP address of the user
+    :type ip_address: str | None
+    :ivar port: the port number of the user
+    :type port: int | None
+    :ivar __active: free/occupied flag
+    :type __active: bool
+    :ivar received_audio_buffer: the received audio buffer
+    :type received_audio_buffer: asyncio.Queue
+    :ivar transmitted_audio_buffer: the transmitted audio buffer
+    :type transmitted_audio_buffer: asyncio.Queue
+    :ivar audio_transmitter_task: the task in asyncio loop for data downlink
+    :type audio_transmitter_task: asyncio.Task | None
+    """
+
     def __init__(self, main_server: MainServer) -> None:
+        """Constructor for ServerUserSocket
+        :param main_server: the main server reference
+        :type main_server: MainServer"""
+        self.main_server = main_server
         self.ip_address = None
         self.port = None
         self.name = None
         self.__active = False
-        self.received_audio_buffer = None
-        self.transmitted_audio_buffer = None
+        self.received_audio_buffer = asyncio.Queue(maxsize=self.main_server.received_audio_buffer_size)
+        self.transmitted_audio_buffer = asyncio.Queue(maxsize=self.main_server.transmitted_audio_buffer_size)
         self.audio_transmitter_task = None
-        self.main_server = main_server
 
     def switch_on(self, ip_address: str, port: int, name: str | None = None) -> None:
+        """Assigns tablet to the slot
+        :param ip_address: the IP address of the user
+        :type ip_address: str
+        :param port: the port number of the user
+        :type port: int
+        :param name: the name of the user
+        :type name: str | None"""
         self.ip_address = ip_address
         self.port = port
         self.name = "unknown" if name is None else name
@@ -23,14 +50,17 @@ class ServerUserSocket:
         self.__active = True
 
     def switch_off(self) -> None:
+        """Frees and cleans the slot"""
         self.__active = False
         if self.audio_transmitter_task is not None:
             self.audio_transmitter_task.cancel()
 
     def active(self) -> bool:
+        """Returns if the slot is free or not"""
         return self.__active
 
     def udp_address(self) -> tuple[str, int]:
+        """Returns full UDP address of tablet"""
         return self.ip_address, self.port
 
     def __repr__(self) -> str:
@@ -39,6 +69,7 @@ class ServerUserSocket:
         return "(empty)"
 
     async def AudioTransmitter(self) -> None:
+        """Sends audio to the tablet"""
         print(f"AudioTransmitter for {self.ip_address} ready")
         try:
             while self.active() and self.main_server.is_running():
@@ -52,7 +83,7 @@ class ServerUserSocket:
             raise
 
 
-def client_instruction0() -> None:
+"""def client_instruction0() -> None:
     pass
 
 
@@ -80,24 +111,34 @@ def manager_instruction2() -> None:
 
 
 DEFAULT_MANAGER_COMMAND_SET = [manager_instruction0, manager_instruction1, manager_instruction2]
+"""
 
-
-class RoutingStatus(Enum):
+"""class RoutingStatus(Enum):
     DISCONNECTED = 0
     CONNECTED = 1
-    PRIORITY = 2
+    PRIORITY = 2"""
 
 
 class AudioReceiver(asyncio.DatagramProtocol):
+    """Receives audio from the tablets
+    :ivar main_server: the main server object
+    :type main_server: MainServer
+    :ivar transport: the asyncio.DatagramTransport object
+    :type transport: asyncio.DatagramTransport | None"""
     def __init__(self, main_server: MainServer) -> None:
+        self.transport = None
         super().__init__()
         self.main_server = main_server
 
     def connection_made(self, transport):
+        """Function called once, when datagram endpoint is created
+        :param transport: the asyncio.DatagramTransport object
+        :ivar transport: asyncio.DatagramTransport"""
         self.transport = transport
         print("AudioReceiver ready")
 
     def datagram_received(self, data, addr):
+        """A callback called when new data arrives"""
         try:
             for i in range(self.main_server.max_users):
                 if self.main_server.user_sockets[i].udp_address() == addr:
@@ -112,11 +153,12 @@ class AudioReceiver(asyncio.DatagramProtocol):
 
 
 async def AudioTester(main_server: MainServer, i: int) -> None:
+    """Async task for testing purposes"""
     print(f"AudioTester ready")
     while main_server.is_running():
         data = await main_server.user_sockets[i].received_audio_buffer.get()
         await main_server.user_sockets[i].transmitted_audio_buffer.put(data)
-        #print("bridge")
+        # print("bridge")
     print(f"AudioTester closed")
 
 
@@ -142,7 +184,7 @@ class MainServer:
             config = json.load(config_json)
         check_config(config)
         self.max_users = config["max_users"]
-        self.channels = config["channels"]
+        #self.channels = config["channels"]
         self.whitelist = config["whitelist"]
         self.ip_address = config["ip_address"]
         self.communication_port = config["communication_port"]
@@ -155,10 +197,10 @@ class MainServer:
         self.udp_transport = None
         # self.transmitted_audio_buffers = [asyncio.Queue(maxsize=self.transmitted_audio_buffer_size) for _ in range(self.max_users)]
 
-        self.downlink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.max_users)] for _ in
-                                       range(self.channels)]
-        self.uplink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.max_users)] for _ in
-                                     range(self.channels)]
+        # self.downlink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.max_users)] for _ in
+        # range(self.channels)]
+        # self.uplink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.max_users)] for _ in
+        # range(self.channels)]
 
         self.__RUN = True
         self.loop = None
@@ -178,7 +220,7 @@ class MainServer:
         # for testing (start)
         self.add_user(("127.0.0.1", 9100))
         self.add_user(("127.0.0.1", 9101))
-        self.loop.create_task(AudioTester(self,0))
+        self.loop.create_task(AudioTester(self, 0))
         self.loop.create_task(AudioTester(self, 1))
         await asyncio.sleep(5)
         self.remove_user(("127.0.0.1", 9100))
@@ -218,16 +260,16 @@ class MainServer:
         :type udp_address: tuple[str, int]
         :return: user id on this server
         :rtype: int"""
-        if udp_address[0] in self.whitelist:
-            for i in range(self.max_users):
-                if not self.user_sockets[i].active():
-                    self.user_sockets[i].switch_on(udp_address[0], udp_address[1], name)
-                    task = self.loop.create_task(self.user_sockets[i].AudioTransmitter())
-                    self.user_sockets[i].audio_transmitter_task = task
-                    print(f"User added: {self.user_sockets[i]}")
-                    return
-            raise OverflowError(f"No free user slot for user {udp_address}")
-        raise ConnectionRefusedError(f"User {udp_address} not on the whitelist")
+        #if udp_address[0] in self.whitelist:
+        for i in range(self.max_users):
+            if not self.user_sockets[i].active():
+                self.user_sockets[i].switch_on(udp_address[0], udp_address[1], name)
+                task = self.loop.create_task(self.user_sockets[i].AudioTransmitter())
+                self.user_sockets[i].audio_transmitter_task = task
+                print(f"User added: {self.user_sockets[i]}")
+                return
+        raise OverflowError(f"No free user slot for user {udp_address}")
+        #raise ConnectionRefusedError(f"User {udp_address} not on the whitelist")
 
     def remove_user(self, udp_address: tuple[str, int]) -> None:
         """Removes active user, freeing the slot. If no such user exists, raises a KeyError.
@@ -239,7 +281,7 @@ class MainServer:
             self.user_sockets[user_id].switch_off()
             print(f"User removed: {udp_address}")
 
-    def set_downlink_routing_status(self, channel: int, user: ServerUser, status: RoutingStatus) -> None:
+        # def set_downlink_routing_status(self, channel: int, user: ServerUser, status: RoutingStatus) -> None:
         """Change user's status in downlink routing table.
         :param channel: channel's number
         :type channel: int
@@ -248,7 +290,7 @@ class MainServer:
         :param status: new user's status
         :type channel: RoutingStatus
         :return None:"""
-        if channel not in range(self.channels):
+        """if channel not in range(self.channels):
             raise ValueError(f"Channel {channel} is incorrect")
         if not isinstance(user, ServerUser):
             raise TypeError(f"User must be type ServerUser, not {type(user)}")
@@ -260,9 +302,9 @@ class MainServer:
                     with self.lock_bank.downlink_routing_lock:
                         self.downlink_routing_table[channel][i] = status
                     return
-        raise KeyError(f"User {user} not found")
+        raise KeyError(f"User {user} not found")"""
 
-    def set_uplink_routing_status(self, channel: int, user: ServerUser, status: RoutingStatus) -> None:
+        # def set_uplink_routing_status(self, channel: int, user: ServerUser, status: RoutingStatus) -> None:
         """Change user's status in uplink routing table.
         :param channel: channel's number
         :type channel: int
@@ -271,7 +313,7 @@ class MainServer:
         :param status: new user's status
         :type channel: RoutingStatus
         return: None"""
-        if channel not in range(self.channels):
+        """if channel not in range(self.channels):
             raise ValueError(f"Channel {channel} is incorrect")
         if not isinstance(user, ServerUser):
             raise TypeError(f"User must be type ServerUser, not {type(user)}")
@@ -283,9 +325,9 @@ class MainServer:
                     with self.lock_bank.downlink_routing_lock:
                         self.uplink_routing_table[channel][i] = status
                     return
-        raise KeyError(f"User {user} not found")
+        raise KeyError(f"User {user} not found")"""
 
-    def execute_manager_command(self, command: dict) -> None:
+    """def execute_manager_command(self, command: dict) -> None:
         if self.manager_command_buffer.full():
             discard = self.manager_command_buffer.get_nowait()
             raise Full(f"Manager command buffer overflow, discarded: {discard}")
@@ -301,7 +343,7 @@ class MainServer:
             for i in range(self.max_users):
                 if self.active_users[i] is not None and self.active_users[i].ip_address == user_ip:
                     return self.received_audio_buffers[i].get_nowait()
-        raise KeyError(f"User {user_ip} not found")
+        raise KeyError(f"User {user_ip} not found")"""
 
 
 def check_config(config: dict) -> None:
