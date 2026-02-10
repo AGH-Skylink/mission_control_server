@@ -7,7 +7,8 @@ app = FastAPI(title="Mission Control Server API", version="0.1.0")
 
 @app.on_event("startup")
 async def startup():
-    asyncio.create_task(main_server.run())
+    loop = asyncio.get_running_loop()
+    asyncio.create_task(main_server.run(loop))
 
 # TODO: add a few subcategories, like config, users, etc.
 @app.get("/state")
@@ -34,10 +35,14 @@ def kick_user(ip_address: str):
 def change_routing_status():
     pass
 
-@app.post("/restart")
-def restart_server():
+@app.post("/start")
+def start_server():
     pass
 
 @app.post("/stop")
 def stop_server():
+    pass
+
+@app.post("/restart")
+def restart_server():
     pass

@@ -1,6 +1,6 @@
 import asyncio
 import json
-from enum import Enum
+# from enum import Enum
 
 
 class ServerUserSocket:
@@ -83,48 +83,13 @@ class ServerUserSocket:
             raise
 
 
-"""def client_instruction0() -> None:
-    pass
-
-
-def client_instruction1() -> None:
-    pass
-
-
-def client_instruction2():
-    pass
-
-
-DEFAULT_CLIENT_COMMAND_SET = [client_instruction0, client_instruction1, client_instruction2]
-
-
-def manager_instruction0() -> None:
-    pass
-
-
-def manager_instruction1() -> None:
-    pass
-
-
-def manager_instruction2() -> None:
-    pass
-
-
-DEFAULT_MANAGER_COMMAND_SET = [manager_instruction0, manager_instruction1, manager_instruction2]
-"""
-
-"""class RoutingStatus(Enum):
-    DISCONNECTED = 0
-    CONNECTED = 1
-    PRIORITY = 2"""
-
-
 class AudioReceiver(asyncio.DatagramProtocol):
     """Receives audio from the tablets
     :ivar main_server: the main server object
     :type main_server: MainServer
     :ivar transport: the asyncio.DatagramTransport object
     :type transport: asyncio.DatagramTransport | None"""
+
     def __init__(self, main_server: MainServer) -> None:
         self.transport = None
         super().__init__()
@@ -138,7 +103,11 @@ class AudioReceiver(asyncio.DatagramProtocol):
         print("AudioReceiver ready")
 
     def datagram_received(self, data, addr):
-        """A callback called when new data arrives"""
+        """A callback called when new data arrives
+        :param data: an incoming audio data
+        :type data: bytes
+        :param addr: a tablet IP address
+        :type addr: tuple[str, int]"""
         try:
             for i in range(self.main_server.max_users):
                 if self.main_server.user_sockets[i].udp_address() == addr:
@@ -152,12 +121,18 @@ class AudioReceiver(asyncio.DatagramProtocol):
             pass
 
 
-async def AudioTester(main_server: MainServer, i: int) -> None:
-    """Async task for testing purposes"""
+async def AudioTester(main_server: MainServer, i: int, j: int) -> None:
+    """Async task for testing purposes
+    :param main_server: the main server object
+    :type main_server: MainServer
+    :param i: the index of the sender
+    :type i: int
+    :param j: the index of the receiver
+    :type j: int"""
     print(f"AudioTester ready")
     while main_server.is_running():
         data = await main_server.user_sockets[i].received_audio_buffer.get()
-        await main_server.user_sockets[i].transmitted_audio_buffer.put(data)
+        await main_server.user_sockets[j].transmitted_audio_buffer.put(data)
         # print("bridge")
     print(f"AudioTester closed")
 
@@ -165,17 +140,7 @@ async def AudioTester(main_server: MainServer, i: int) -> None:
 class MainServer:
     """An object representing server.
     :ivar max_users: the maximal number of users server can handle simultaneously
-    :type max_users: int
-    :ivar active_users: an array of references to active users object instances
-    :type active_users: list[ServerUser | None]
-    :ivar __active_threads: a set of threads to stop once the server is shut down
-    :type __active_threads: set[threading.Thread]
-    :ivar client_command_set: a list of commands sent from client to the server
-    :type client_command_set: list[Callable]
-    :ivar downlink_routing_table: permission for listening to channels
-    :type downlink_routing_table: list[list[RoutingStatus]]
-    :ivar uplink_routing_table: permission for talking on channels
-    :type uplink_routing_table: list[list[RoutingStatus]]"""
+    :type max_users: int"""
 
     def __init__(self, config_file: str):
 
@@ -184,8 +149,6 @@ class MainServer:
             config = json.load(config_json)
         check_config(config)
         self.max_users = config["max_users"]
-        #self.channels = config["channels"]
-        self.whitelist = config["whitelist"]
         self.ip_address = config["ip_address"]
         self.communication_port = config["communication_port"]
         self.remote_communication_port = config["remote_communication_port"]
@@ -203,16 +166,22 @@ class MainServer:
         # range(self.channels)]
 
         self.__RUN = True
+        self.__STOPPED = False
         self.loop = None
 
     def is_running(self) -> bool:
+        """Checks if server is running"""
         return self.__RUN
+
+    def is_stopped(self) -> bool:
+        """Checks if server is stopped correctly"""
+        return self.__STOPPED
 
     async def initiate_server(self) -> None:
         """This function is called once when the server starts.
         :return None:"""
         print("Server started")
-        self.loop = asyncio.get_running_loop()
+        self.__STOPPED = False
         transport, protocol = await self.loop.create_datagram_endpoint(
             lambda: AudioReceiver(self),
             local_addr=(self.ip_address, self.communication_port))
@@ -220,8 +189,8 @@ class MainServer:
         # for testing (start)
         self.add_user(("127.0.0.1", 9100))
         self.add_user(("127.0.0.1", 9101))
-        self.loop.create_task(AudioTester(self, 0))
-        self.loop.create_task(AudioTester(self, 1))
+        self.loop.create_task(AudioTester(self, 0, 0))
+        self.loop.create_task(AudioTester(self, 1, 1))
         await asyncio.sleep(5)
         self.remove_user(("127.0.0.1", 9100))
         self.remove_user(("127.0.0.1", 9101))
@@ -237,18 +206,21 @@ class MainServer:
         :return None:"""
         if self.udp_transport is not None:
             self.udp_transport.close()
+        self.__STOPPED = True
         print("Server closed")
 
-    async def run(self) -> None:
+    async def run(self, loop: asyncio.AbstractEventLoop) -> None:
         """The body of the server, consists of initializing function, main loop and closing function.
         :return None:"""
+        self.loop = loop
         await self.initiate_server()
         while self.__RUN:
             await self.main_server_loop()
-            await asyncio.sleep(0)  # TODO: make it parameter
+            await asyncio.sleep(0)
         await self.close_server()
 
     def get_user_id(self, udp_address: tuple[str, int]) -> int:
+        """Translates IP address to id of ServerUserSocket."""
         for i in range(self.max_users):
             if self.user_sockets[i].active() and self.user_sockets[i].udp_address() == udp_address:
                 return i
@@ -258,9 +230,10 @@ class MainServer:
         """Adds a new active user to the list. If no free slot, raises an OverflowError.
         :param udp_address: the user to add
         :type udp_address: tuple[str, int]
+        :param name: optional, the tablet name
         :return: user id on this server
         :rtype: int"""
-        #if udp_address[0] in self.whitelist:
+        # if udp_address[0] in self.whitelist:
         for i in range(self.max_users):
             if not self.user_sockets[i].active():
                 self.user_sockets[i].switch_on(udp_address[0], udp_address[1], name)
@@ -269,7 +242,7 @@ class MainServer:
                 print(f"User added: {self.user_sockets[i]}")
                 return
         raise OverflowError(f"No free user slot for user {udp_address}")
-        #raise ConnectionRefusedError(f"User {udp_address} not on the whitelist")
+        # raise ConnectionRefusedError(f"User {udp_address} not on the whitelist")
 
     def remove_user(self, udp_address: tuple[str, int]) -> None:
         """Removes active user, freeing the slot. If no such user exists, raises a KeyError.
@@ -351,11 +324,10 @@ def check_config(config: dict) -> None:
     :param config: server configuration
     :type config: dict
     """
-    for param, ptype in [("max_users", int), ("channels", int), ("ip_address", str), ("communication_port", int),
+    for param, ptype in [("max_users", int), ("ip_address", str), ("communication_port", int),
                          ("transmitted_audio_buffer_size", int), ("received_audio_buffer_size", int),
-                         ("manager_command_buffer_size", int), ("server_request_buffer_size", int),
-                         ("remote_communication_port", int), ("whitelist", list), ("audio_chunk_size", int)]:
+                         ("remote_communication_port", int), ("audio_chunk_size", int)]:
         if param not in config:
             raise KeyError(f"Missing configuration parameter: {param}")
         if type(config[param]) != ptype:
-            raise KeyError(f"{param} must be {ptype}, not {type(config[param])}")
+            raise TypeError(f"{param} must be {ptype}, not {type(config[param])}")
