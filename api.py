@@ -62,11 +62,6 @@ def change_priority(ip_address: str, priority: int) -> dict:
     return {"ok": True}
 
 
-@app.post("/tablet/routing")
-def change_routing_status():
-    pass
-
-
 @app.post("/start")
 async def start_server():
     loop = asyncio.get_running_loop()

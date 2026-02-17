@@ -143,7 +143,7 @@ async def AudioTester(main_server: MainServer, i: int, j: int) -> None:
 
 
 async def LoadObserver(main_server: MainServer) -> None:
-    """Monitors server load, can change the priority if latency is to high
+    """Monitors server load
     :param main_server: the main server object
     :type main_server: MainServer"""
     print(f"LoadObserver ready")
@@ -285,73 +285,6 @@ class MainServer:
         user_id = self.get_user_id(udp_address)
         self.user_sockets[user_id].priority = priority
         print(f"User removed: {udp_address}")
-
-        # def set_downlink_routing_status(self, channel: int, user: ServerUser, status: RoutingStatus) -> None:
-
-    """Change user's status in downlink routing table.
-    :param channel: channel's number
-    :type channel: int
-    :param user: user to change status
-    :type channel: ServerUser
-    :param status: new user's status
-    :type channel: RoutingStatus
-    :return None:"""
-    """if channel not in range(self.channels):
-        raise ValueError(f"Channel {channel} is incorrect")
-    if not isinstance(user, ServerUser):
-        raise TypeError(f"User must be type ServerUser, not {type(user)}")
-    if not isinstance(status, RoutingStatus):
-        raise TypeError(f"Status must be type RoutingStatus, not {type(status)}")
-    for i in range(self.max_users):
-        with self.lock_bank.active_users_lock:
-            if type(self.active_users[i]) == ServerUser and self.active_users[i] == user:
-                with self.lock_bank.downlink_routing_lock:
-                    self.downlink_routing_table[channel][i] = status
-                return
-    raise KeyError(f"User {user} not found")"""
-
-    # def set_uplink_routing_status(self, channel: int, user: ServerUser, status: RoutingStatus) -> None:
-    """Change user's status in uplink routing table.
-    :param channel: channel's number
-    :type channel: int
-    :param user: user to change status
-    :type channel: ServerUser
-    :param status: new user's status
-    :type channel: RoutingStatus
-    return: None"""
-    """if channel not in range(self.channels):
-        raise ValueError(f"Channel {channel} is incorrect")
-    if not isinstance(user, ServerUser):
-        raise TypeError(f"User must be type ServerUser, not {type(user)}")
-    if not isinstance(status, RoutingStatus):
-        raise TypeError(f"Status must be type RoutingStatus, not {type(status)}")
-    for i in range(self.max_users):
-        with self.lock_bank.active_users_lock:
-            if type(self.active_users[i]) == ServerUser and self.active_users[i] == user:
-                with self.lock_bank.downlink_routing_lock:
-                    self.uplink_routing_table[channel][i] = status
-                return
-    raise KeyError(f"User {user} not found")"""
-
-
-"""def execute_manager_command(self, command: dict) -> None:
-    if self.manager_command_buffer.full():
-        discard = self.manager_command_buffer.get_nowait()
-        raise Full(f"Manager command buffer overflow, discarded: {discard}")
-    self.manager_command_buffer.put_nowait({"command": 1, "data": command})
-
-def audio_to_buffer(self, audio_chunk: bytes, channel: int) -> None:
-    if channel not in range(self.channels):
-        raise ValueError(f"Channel {channel} is incorrect")
-    self.transmitted_audio_buffers[channel].put_nowait(audio_chunk)
-
-def audio_from_buffer(self, user_ip: str) -> bytes:
-    with self.lock_bank.active_users_lock:
-        for i in range(self.max_users):
-            if self.active_users[i] is not None and self.active_users[i].ip_address == user_ip:
-                return self.received_audio_buffers[i].get_nowait()
-    raise KeyError(f"User {user_ip} not found")"""
-
 
 def check_config(config: dict) -> None:
     """Checks the server's configuration from JSON file.
