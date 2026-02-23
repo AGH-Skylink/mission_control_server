@@ -6,17 +6,22 @@ from multiprocessing import shared_memory
 
 
 class RingBuffer:
-    def __init__(self, shm_package: dict, dtype=np.float32):
+    def __init__(self, shm_package: dict):
         self.buffer_size = shm_package["buffer_size"]
         self.frame_size = shm_package["frame_size"]
         self.shm_memory = shared_memory.SharedMemory(name=shm_package["memory_name"])
-        self.memory = np.ndarray((self.buffer_size, self.frame_size), dtype=dtype, buffer=self.shm_memory.buf)
+        self.memory = np.ndarray((self.buffer_size, self.frame_size), dtype=np.float32, buffer=self.shm_memory.buf)
         self.read_flag = shm_package["read_flag"]  # flag is incremented, next data is read
         self.read_lock = shm_package["read_lock"]
         self.write_flag = shm_package["write_flag"]  # data is written, next flag is incremented
         self.write_lock = shm_package["write_lock"]
-        self.read_flag = 0
-        self.write_flag = 1
+        self.reset()
+
+    def reset(self) -> None:
+        with self.write_lock:
+            with self.read_lock:
+                self.read_flag = 0
+                self.write_flag = 1
 
     def memory_name(self) -> str:
         return self.shm_memory.name
@@ -66,18 +71,17 @@ class ServerUserSocket:
     :type received_audio_buffer: RingBuffer
     """
 
-    def __init__(self, main_server: MainServer) -> None:
+    def __init__(self, main_server: MainServer, ring_buffer: RingBuffer) -> None:
         """Constructor for ServerUserSocket
         :param main_server: the main server reference
-        :type main_server: MainServer"""
+        :type main_server: MainServer
+        :param ring_buffer: the RingBuffer for received audio"""
         self.main_server = main_server
         self.ip_address = None
         self.port = None
         self.name = None
         self.__active = False
-        self.received_audio_buffer = asyncio.Queue(maxsize=self.main_server.received_audio_buffer_size)
-        # self.transmitted_audio_buffer = asyncio.Queue(maxsize=self.main_server.transmitted_audio_buffer_size)
-        # self.audio_transmitter_task = None
+        self.received_audio_buffer = ring_buffer
 
     def switch_on(self, ip_address: str, port: int, name: str | None = None) -> None:
         """Assigns tablet to the slot
@@ -90,16 +94,11 @@ class ServerUserSocket:
         self.ip_address = ip_address
         self.port = port
         self.name = "unknown" if name is None else name
-        # self.priority = 0
-        # self.received_audio_buffer = asyncio.Queue(maxsize=self.main_server.received_audio_buffer_size)
-        # self.transmitted_audio_buffer = asyncio.Queue(maxsize=self.main_server.transmitted_audio_buffer_size)
         self.__active = True
 
     def switch_off(self) -> None:
         """Frees and cleans the slot"""
         self.__active = False
-        # if self.audio_transmitter_task is not None:
-        # self.audio_transmitter_task.cancel()
 
     def is_active(self) -> bool:
         """Returns if the slot is free or not"""
@@ -114,19 +113,21 @@ class ServerUserSocket:
             return f"({self.name}, ({self.ip_address}, {self.port}))"
         return "(empty)"
 
-    async def AudioTransmitter(self) -> None:
-        """Sends audio to the tablet"""
-        print(f"AudioTransmitter for {self.ip_address} ready")
-        try:
-            while self.is_active() and self.main_server.is_running():
-                data = await self.transmitted_audio_buffer.get()
-                if self.is_active():
-                    self.main_server.udp_transport.sendto(data, (self.ip_address, self.port))
-                    # print(f"sent {self}")
-                await asyncio.sleep(0)
-        except asyncio.CancelledError:
-            print(f"AudioTransmitter for {self.ip_address} closed")
-            raise
+
+async def AudioTransmitter(main_server: MainServer) -> None:
+    """Sends audio to the tablets"""
+    print(f"AudioTransmitter ready")
+    while main_server.is_running():
+        for i in range(main_server.channels):
+            if not main_server.transmitted_audio_buffers[i].empty():
+                data = main_server.transmitted_audio_buffers[i].get()
+                for j in range(main_server.max_users):
+                    if not main_server.user_sockets[j].is_active():
+                        continue
+                    main_server.udp_transport.sendto(data, main_server.user_sockets[j].udp_address())
+                    await asyncio.sleep(0)
+        await asyncio.sleep(0)
+    print(f"AudioTransmitter stopped")
 
 
 class AudioReceiver(asyncio.DatagramProtocol):
@@ -154,17 +155,12 @@ class AudioReceiver(asyncio.DatagramProtocol):
         :type data: bytes
         :param addr: a tablet IP address
         :type addr: tuple[str, int]"""
-        try:
-            for i in range(self.main_server.max_users):
-                if self.main_server.user_sockets[i].udp_address() == addr:
-                    if self.main_server.user_sockets[i].received_audio_buffer.full():
-                        self.main_server.user_sockets[i].received_audio_buffer.get_nowait()
-                    self.main_server.user_sockets[i].received_audio_buffer.put_nowait(data)
-                    break
-        except asyncio.QueueEmpty:
-            pass
-        except asyncio.QueueFull:
-            pass
+        for i in range(self.main_server.max_users):
+            if self.main_server.user_sockets[i].udp_address() == addr:
+                data = np.frombuffer(data, dtype=np.float32).reshape(
+                    (self.main_server.received_audio_buffer_size, self.main_server.audio_chunk_size))
+                self.main_server.user_sockets[i].received_audio_buffer.put(data, regardless=True)
+                break
 
 
 """async def AudioTester(main_server: MainServer, i: int, j: int) -> None:
@@ -197,7 +193,8 @@ class MainServer:
     :ivar max_users: the maximal number of users server can handle simultaneously
     :type max_users: int"""
 
-    def __init__(self, config_file: str):
+    def __init__(self, config_file: str, downlink_buffers_packages: list[dict],
+                 uplink_buffers_packages: list[dict]):
 
         # configuration parameters
         with open(config_file, "r", encoding="utf-8") as config_json:
@@ -205,6 +202,7 @@ class MainServer:
         check_config(config)
 
         self.max_users = config["max_users"]
+        self.channels = config["channels"]
         self.ip_address = config["ip_address"]
         self.communication_port = config["communication_port"]
         self.remote_communication_port = config["remote_communication_port"]
@@ -212,11 +210,12 @@ class MainServer:
         self.received_audio_buffer_size = config["received_audio_buffer_size"]
         self.transmitted_audio_buffer_size = config["transmitted_audio_buffer_size"]
 
-        self.user_sockets = [ServerUserSocket(self) for _ in range(self.max_users)]
+        self.user_sockets = [ServerUserSocket(self, RingBuffer(uplink_buffers_packages[i]))
+                             for i in range(self.max_users)]
+        self.transmitted_audio_buffers = [RingBuffer(downlink_buffers_packages[i]) for i in range(self.channels)]
 
         self.udp_transport = None
         self.loop = None
-        # self.transmitted_audio_buffers = [asyncio.Queue(maxsize=self.transmitted_audio_buffer_size) for _ in range(self.max_users)]
 
         self.__RUN = False
         self.__READY = False
@@ -327,7 +326,7 @@ def check_config(config: dict) -> None:
     :param config: server configuration
     :type config: dict
     """
-    for param, ptype in [("max_users", int), ("ip_address", str), ("communication_port", int),
+    for param, ptype in [("max_users", int), ("channels", int), ("ip_address", str), ("communication_port", int),
                          ("transmitted_audio_buffer_size", int), ("received_audio_buffer_size", int),
                          ("remote_communication_port", int), ("audio_chunk_size", int)]:
         if param not in config:

@@ -1,4 +1,3 @@
-from websockets.sync.client import connect
 import time
 import sounddevice as sd
 import socket
