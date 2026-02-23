@@ -1,41 +1,53 @@
 import asyncio
 import json
 import numpy as np
-import ctypes
-
+import multiprocessing as mp
 from multiprocessing import shared_memory
 
 
-class RingBufferController:
-    def __init__(self):
-        self.shm = shared_memory.SharedMemory(create=True, size=2 * ctypes.sizeof(ctypes.c_int))
-        self.memory = np.ndarray((2,), dtype=np.int32, buffer=self.shm.buf)
-
-    def memory_name(self) -> str:
-        return self.shm.name
-
-    def write_flag(self) -> np.ndarray:
-        return self.memory[0:1]
-
-    def read_flag(self) -> np.ndarray:
-        return self.memory[1:2]
-
-
 class RingBuffer:
-    def __init__(self, frame_size: int, buffer_size: int, controller: RingBufferController,
-                 dtype=np.float32):
-        self.frame_size = frame_size
-        self.buffer_size = buffer_size
-        shm_size = buffer_size * frame_size * np.dtype(dtype).itemsize
-        self.shm = shared_memory.SharedMemory(create=True, size=shm_size)
-        self.memory = np.ndarray((buffer_size,frame_size), dtype=dtype, buffer=self.shm.buf)
-        self.controller = controller
+    def __init__(self, shm_package: dict, dtype=np.float32):
+        self.buffer_size = shm_package["buffer_size"]
+        self.frame_size = shm_package["frame_size"]
+        self.shm_memory = shared_memory.SharedMemory(name=shm_package["memory_name"])
+        self.memory = np.ndarray((self.buffer_size, self.frame_size), dtype=dtype, buffer=self.shm_memory.buf)
+        self.read_flag = shm_package["read_flag"]  # flag is incremented, next data is read
+        self.read_lock = shm_package["read_lock"]
+        self.write_flag = shm_package["write_flag"]  # data is written, next flag is incremented
+        self.write_lock = shm_package["write_lock"]
+        self.read_flag = 0
+        self.write_flag = 1
 
     def memory_name(self) -> str:
-        return self.shm.name
+        return self.shm_memory.name
 
-    def controller_name(self) -> str:
-        return self.controller.memory_name()
+    def empty(self) -> bool:
+        with self.write_lock:
+            with self.read_lock:
+                return self.write_flag == (self.read_flag + 1) % self.buffer_size
+
+    def full(self) -> bool:
+        with self.write_lock:
+            with self.read_lock:
+                return self.read_flag == self.write_flag
+
+    def get(self) -> np.ndarray:
+        if self.empty():
+            raise Exception(f"Buffer empty")
+        with self.read_lock:
+            self.read_flag = (self.read_flag + 1) % self.buffer_size
+        memory_copy = self.memory[self.read_flag, :].copy()
+        return memory_copy
+
+    def put(self, data: np.ndarray, regardless: bool = False) -> None:
+        if self.full():
+            if regardless:
+                self.memory[self.read_flag, :] = data
+                return
+            raise Exception(f"Buffer full")
+        self.memory[self.read_flag, :] = data
+        with self.write_lock:
+            self.write_flag = (self.write_flag + 1) % self.buffer_size
 
 
 class ServerUserSocket:
@@ -176,7 +188,6 @@ class AudioReceiver(asyncio.DatagramProtocol):
     :type main_server: MainServer
     print(f"LoadObserver ready")
     while main_server.is_running():
-        active_users = 0
         break
     print(f"LoadObserver closed")"""
 
