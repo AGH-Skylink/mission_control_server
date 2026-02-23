@@ -21,7 +21,7 @@ app = FastAPI(title="Mission Control Server API", version="0.1.0", lifespan=life
 async def get_users():
     tablets = []
     for socket in main_server.user_sockets:
-        if socket.active():
+        if socket.is_active():
             tablets.append({"ip_address": socket.ip_address, "port": socket.port, "name": socket.name,
                             "priority": socket.priority})
         await asyncio.sleep(0)

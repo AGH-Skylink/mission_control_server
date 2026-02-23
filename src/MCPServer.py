@@ -1,5 +1,41 @@
 import asyncio
 import json
+import numpy as np
+import ctypes
+
+from multiprocessing import shared_memory
+
+
+class RingBufferController:
+    def __init__(self):
+        self.shm = shared_memory.SharedMemory(create=True, size=2 * ctypes.sizeof(ctypes.c_int))
+        self.memory = np.ndarray((2,), dtype=np.int32, buffer=self.shm.buf)
+
+    def memory_name(self) -> str:
+        return self.shm.name
+
+    def write_flag(self) -> np.ndarray:
+        return self.memory[0:1]
+
+    def read_flag(self) -> np.ndarray:
+        return self.memory[1:2]
+
+
+class RingBuffer:
+    def __init__(self, frame_size: int, buffer_size: int, controller: RingBufferController,
+                 dtype=np.float32):
+        self.frame_size = frame_size
+        self.buffer_size = buffer_size
+        shm_size = buffer_size * frame_size * np.dtype(dtype).itemsize
+        self.shm = shared_memory.SharedMemory(create=True, size=shm_size)
+        self.memory = np.ndarray((buffer_size,frame_size), dtype=dtype, buffer=self.shm.buf)
+        self.controller = controller
+
+    def memory_name(self) -> str:
+        return self.shm.name
+
+    def controller_name(self) -> str:
+        return self.controller.memory_name()
 
 
 class ServerUserSocket:
@@ -12,16 +48,10 @@ class ServerUserSocket:
     :type port: int | None
     :ivar name: the name of the user
     :type name: str | None
-    :ivar priority: the priority of the user
-    :type priority: int | None
     :ivar __active: free/occupied flag
     :type __active: bool
     :ivar received_audio_buffer: the received audio buffer
-    :type received_audio_buffer: asyncio.Queue
-    :ivar transmitted_audio_buffer: the transmitted audio buffer
-    :type transmitted_audio_buffer: asyncio.Queue
-    :ivar audio_transmitter_task: the task in asyncio loop for data downlink
-    :type audio_transmitter_task: asyncio.Task | None
+    :type received_audio_buffer: RingBuffer
     """
 
     def __init__(self, main_server: MainServer) -> None:
@@ -32,11 +62,10 @@ class ServerUserSocket:
         self.ip_address = None
         self.port = None
         self.name = None
-        self.priority = None
         self.__active = False
         self.received_audio_buffer = asyncio.Queue(maxsize=self.main_server.received_audio_buffer_size)
-        self.transmitted_audio_buffer = asyncio.Queue(maxsize=self.main_server.transmitted_audio_buffer_size)
-        self.audio_transmitter_task = None
+        # self.transmitted_audio_buffer = asyncio.Queue(maxsize=self.main_server.transmitted_audio_buffer_size)
+        # self.audio_transmitter_task = None
 
     def switch_on(self, ip_address: str, port: int, name: str | None = None) -> None:
         """Assigns tablet to the slot
@@ -49,18 +78,18 @@ class ServerUserSocket:
         self.ip_address = ip_address
         self.port = port
         self.name = "unknown" if name is None else name
-        self.priority = 0
-        self.received_audio_buffer = asyncio.Queue(maxsize=self.main_server.received_audio_buffer_size)
-        self.transmitted_audio_buffer = asyncio.Queue(maxsize=self.main_server.transmitted_audio_buffer_size)
+        # self.priority = 0
+        # self.received_audio_buffer = asyncio.Queue(maxsize=self.main_server.received_audio_buffer_size)
+        # self.transmitted_audio_buffer = asyncio.Queue(maxsize=self.main_server.transmitted_audio_buffer_size)
         self.__active = True
 
     def switch_off(self) -> None:
         """Frees and cleans the slot"""
         self.__active = False
-        if self.audio_transmitter_task is not None:
-            self.audio_transmitter_task.cancel()
+        # if self.audio_transmitter_task is not None:
+        # self.audio_transmitter_task.cancel()
 
-    def active(self) -> bool:
+    def is_active(self) -> bool:
         """Returns if the slot is free or not"""
         return self.__active
 
@@ -69,7 +98,7 @@ class ServerUserSocket:
         return self.ip_address, self.port
 
     def __repr__(self) -> str:
-        if self.active():
+        if self.is_active():
             return f"({self.name}, ({self.ip_address}, {self.port}))"
         return "(empty)"
 
@@ -77,9 +106,9 @@ class ServerUserSocket:
         """Sends audio to the tablet"""
         print(f"AudioTransmitter for {self.ip_address} ready")
         try:
-            while self.active() and self.main_server.is_running():
+            while self.is_active() and self.main_server.is_running():
                 data = await self.transmitted_audio_buffer.get()
-                if self.active():
+                if self.is_active():
                     self.main_server.udp_transport.sendto(data, (self.ip_address, self.port))
                     # print(f"sent {self}")
                 await asyncio.sleep(0)
@@ -126,31 +155,30 @@ class AudioReceiver(asyncio.DatagramProtocol):
             pass
 
 
-async def AudioTester(main_server: MainServer, i: int, j: int) -> None:
-    """Async task for testing purposes
+"""async def AudioTester(main_server: MainServer, i: int, j: int) -> None:
+    Async task for testing purposes
     :param main_server: the main server object
     :type main_server: MainServer
     :param i: the index of the sender
     :type i: int
     :param j: the index of the receiver
-    :type j: int"""
+    :type j: int
     print(f"AudioTester ready")
     while main_server.is_running():
         data = await main_server.user_sockets[i].received_audio_buffer.get()
         await main_server.user_sockets[j].transmitted_audio_buffer.put(data)
         # print("bridge")
-    print(f"AudioTester closed")
+    print(f"AudioTester closed")"""
 
-
-async def LoadObserver(main_server: MainServer) -> None:
-    """Monitors server load
+"""async def LoadObserver(main_server: MainServer) -> None:
+    Monitors server load
     :param main_server: the main server object
-    :type main_server: MainServer"""
+    :type main_server: MainServer
     print(f"LoadObserver ready")
     while main_server.is_running():
         active_users = 0
         break
-    print(f"LoadObserver closed")
+    print(f"LoadObserver closed")"""
 
 
 class MainServer:
@@ -174,17 +202,13 @@ class MainServer:
         self.transmitted_audio_buffer_size = config["transmitted_audio_buffer_size"]
 
         self.user_sockets = [ServerUserSocket(self) for _ in range(self.max_users)]
+
         self.udp_transport = None
+        self.loop = None
         # self.transmitted_audio_buffers = [asyncio.Queue(maxsize=self.transmitted_audio_buffer_size) for _ in range(self.max_users)]
 
-        # self.downlink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.max_users)] for _ in
-        # range(self.channels)]
-        # self.uplink_routing_table = [[RoutingStatus.DISCONNECTED for _ in range(self.max_users)] for _ in
-        # range(self.channels)]
-
         self.__RUN = False
-        self.__STOPPED = False
-        self.loop = None
+        self.__READY = False
 
     def is_running(self) -> bool:
         """Checks if server is running"""
@@ -195,19 +219,19 @@ class MainServer:
 
     def is_stopped(self) -> bool:
         """Checks if server is stopped correctly"""
-        return self.__STOPPED
+        return self.__READY
 
     async def initiate_server(self) -> None:
         """This function is called once when the server starts.
         :return None:"""
         print("Server started")
         self.__RUN = True
-        self.__STOPPED = False
-        transport, protocol = await self.loop.create_datagram_endpoint(
+        self.__READY = False
+        transport, _ = await self.loop.create_datagram_endpoint(
             lambda: AudioReceiver(self),
             local_addr=(self.ip_address, self.communication_port))
         self.udp_transport = transport
-        self.loop.create_task(LoadObserver(self))
+        # self.loop.create_task(LoadObserver(self))
         # for testing (start)
         # self.add_user(("127.0.0.1", 9100))
         # self.add_user(("127.0.0.1", 9101))
@@ -228,7 +252,7 @@ class MainServer:
         :return None:"""
         if self.udp_transport is not None:
             self.udp_transport.close()
-        self.__STOPPED = True
+        self.__READY = True
         print("Server closed")
 
     async def run(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -244,7 +268,7 @@ class MainServer:
     def get_user_id(self, udp_address: tuple[str, int]) -> int:
         """Translates IP address to id of ServerUserSocket."""
         for i in range(self.max_users):
-            if self.user_sockets[i].active() and self.user_sockets[i].udp_address() == udp_address:
+            if self.user_sockets[i].is_active() and self.user_sockets[i].udp_address() == udp_address:
                 return i
         raise KeyError(f"User with address {udp_address} not found")
 
@@ -257,10 +281,10 @@ class MainServer:
         :rtype: int"""
         # if udp_address[0] in self.whitelist:
         for i in range(self.max_users):
-            if not self.user_sockets[i].active():
+            if not self.user_sockets[i].is_active():
                 self.user_sockets[i].switch_on(udp_address[0], udp_address[1], name)
-                task = self.loop.create_task(self.user_sockets[i].AudioTransmitter())
-                self.user_sockets[i].audio_transmitter_task = task
+                # task = self.loop.create_task(self.user_sockets[i].AudioTransmitter())
+                # self.user_sockets[i].audio_transmitter_task = task
                 print(f"User added: {self.user_sockets[i]}")
                 return
         raise OverflowError(f"No free user slot for user {udp_address}")
@@ -275,16 +299,17 @@ class MainServer:
         self.user_sockets[user_id].switch_off()
         print(f"User removed: {udp_address}")
 
-    def change_priority(self, udp_address: tuple[str, int], priority: int) -> None:
-        """Change the user's priority. If no such user exists, raises a KeyError.
+    """def change_priority(self, udp_address: tuple[str, int], priority: int) -> None:
+        Change the user's priority. If no such user exists, raises a KeyError.
         :param udp_address: the user to add
         :type udp_address: tuple[str, int]
         :param priority: the new priority
         :type priority: int
-        :return: None"""
+        :return: None
         user_id = self.get_user_id(udp_address)
         self.user_sockets[user_id].priority = priority
-        print(f"User removed: {udp_address}")
+        print(f"User removed: {udp_address}")"""
+
 
 def check_config(config: dict) -> None:
     """Checks the server's configuration from JSON file.
