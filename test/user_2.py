@@ -14,7 +14,7 @@ channels = 1
 
 
 def main():
-    stream_in = sd.InputStream(samplerate=samplerate, channels=channels, dtype='int16', blocksize=blocksize)
+    stream_in = sd.InputStream(samplerate=samplerate, channels=channels, dtype='float32', blocksize=blocksize)
     stream_in.start()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((udp_local_ip, udp_local_port))

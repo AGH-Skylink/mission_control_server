@@ -6,11 +6,12 @@ from multiprocessing import shared_memory
 
 
 class RingBuffer:
-    def __init__(self, shm_package: dict, dtype = np.float32):
+    def __init__(self, shm_package: dict):
         self.buffer_size = shm_package["buffer_size"]
         self.frame_size = shm_package["frame_size"]
         self.shm_memory = shared_memory.SharedMemory(name=shm_package["memory_name"])
-        self.memory = np.ndarray((self.buffer_size, self.frame_size), dtype=dtype, buffer=self.shm_memory.buf)
+        self.dtype = shm_package["dtype"]
+        self.memory = np.ndarray((self.buffer_size, self.frame_size), dtype=self.dtype, buffer=self.shm_memory.buf)
         self.read_flag = shm_package["read_flag"]  # flag is incremented, next data is read
         self.read_lock = shm_package["read_lock"]
         self.write_flag = shm_package["write_flag"]  # data is written, next flag is incremented
@@ -34,6 +35,7 @@ class RingBuffer:
     def full(self) -> bool:
         with self.write_lock:
             with self.read_lock:
+                # print(self.write_flag, self.read_flag)
                 return self.read_flag == self.write_flag
 
     def get(self) -> np.ndarray:
@@ -41,6 +43,7 @@ class RingBuffer:
             raise Exception(f"Buffer empty")
         with self.read_lock:
             self.read_flag = (self.read_flag + 1) % self.buffer_size
+            print(self.read_flag)
         memory_copy = self.memory[self.read_flag, :].copy()
         return memory_copy
 
@@ -120,7 +123,7 @@ async def AudioTransmitter(main_server: MainServer) -> None:
     while main_server.is_running():
         for i in range(main_server.channels):
             if not main_server.transmitted_audio_buffers[i].empty():
-                data = main_server.transmitted_audio_buffers[i].get()
+                data = main_server.transmitted_audio_buffers[i].get().tobytes()
                 for j in range(main_server.max_users):
                     if not main_server.user_sockets[j].is_active():
                         continue
@@ -157,27 +160,27 @@ class AudioReceiver(asyncio.DatagramProtocol):
         :type addr: tuple[str, int]"""
         for i in range(self.main_server.max_users):
             if self.main_server.user_sockets[i].udp_address() == addr:
-                data = np.frombuffer(data, dtype=np.float32).reshape(
-                    (self.main_server.received_audio_buffer_size, self.main_server.audio_chunk_size))
+                data = np.frombuffer(data, dtype=np.float32)
                 self.main_server.user_sockets[i].received_audio_buffer.put(data, regardless=True)
-                print(f"Received audio from {addr}")
+                #print(f"Received audio from {addr}")
                 break
 
 
-"""async def AudioTester(main_server: MainServer, i: int, j: int) -> None:
-    Async task for testing purposes
+async def AudioTester(main_server: MainServer, i: int, j: int) -> None:
+    """Async task for testing purposes
     :param main_server: the main server object
     :type main_server: MainServer
     :param i: the index of the sender
     :type i: int
     :param j: the index of the receiver
-    :type j: int
+    :type j: int"""
     print(f"AudioTester ready")
     while main_server.is_running():
-        data = await main_server.user_sockets[i].received_audio_buffer.get()
-        await main_server.user_sockets[j].transmitted_audio_buffer.put(data)
-        # print("bridge")
-    print(f"AudioTester closed")"""
+        if not main_server.user_sockets[i].received_audio_buffer.empty():
+            data = main_server.user_sockets[i].received_audio_buffer.get()
+            main_server.transmitted_audio_buffers[j].put(data, regardless=True)
+        await asyncio.sleep(0)
+    print(f"AudioTester closed")
 
 """async def LoadObserver(main_server: MainServer) -> None:
     Monitors server load
@@ -243,6 +246,7 @@ class MainServer:
             lambda: AudioReceiver(self),
             local_addr=(self.ip_address, self.communication_port))
         self.udp_transport = transport
+        self.loop.create_task(AudioTransmitter(self))
         self.__RUN = True
         self.__STATE = "on"
         print("Server started")
@@ -250,7 +254,7 @@ class MainServer:
         # for testing (start)
         # self.add_user(("127.0.0.1", 9100))
         # self.add_user(("127.0.0.1", 9101))
-        # self.loop.create_task(AudioTester(self, 0, 0))
+        self.loop.create_task(AudioTester(self, 0, 0))
         # self.loop.create_task(AudioTester(self, 1, 1))
         # await asyncio.sleep(5)
         # self.remove_user(("127.0.0.1", 9100))
@@ -268,6 +272,7 @@ class MainServer:
         self.__STATE = "shutdown"
         if self.udp_transport is not None:
             self.udp_transport.close()
+            print("AudioTransmitter closed")
         self.__STATE = "off"
         print("Server closed")
 
@@ -295,16 +300,12 @@ class MainServer:
         :param name: optional, the tablet name
         :return: user id on this server
         :rtype: int"""
-        # if udp_address[0] in self.whitelist:
         for i in range(self.max_users):
             if not self.user_sockets[i].is_active():
                 self.user_sockets[i].switch_on(udp_address[0], udp_address[1], name)
-                # task = self.loop.create_task(self.user_sockets[i].AudioTransmitter())
-                # self.user_sockets[i].audio_transmitter_task = task
                 print(f"User added: {self.user_sockets[i]}")
                 return
         raise OverflowError(f"No free user slot for user {udp_address}")
-        # raise ConnectionRefusedError(f"User {udp_address} not on the whitelist")
 
     def remove_user(self, udp_address: tuple[str, int]) -> None:
         """Removes active user, freeing the slot. If no such user exists, raises a KeyError.
