@@ -6,11 +6,11 @@ from multiprocessing import shared_memory
 
 
 class RingBuffer:
-    def __init__(self, shm_package: dict):
+    def __init__(self, shm_package: dict, dtype = np.float32):
         self.buffer_size = shm_package["buffer_size"]
         self.frame_size = shm_package["frame_size"]
         self.shm_memory = shared_memory.SharedMemory(name=shm_package["memory_name"])
-        self.memory = np.ndarray((self.buffer_size, self.frame_size), dtype=np.float32, buffer=self.shm_memory.buf)
+        self.memory = np.ndarray((self.buffer_size, self.frame_size), dtype=dtype, buffer=self.shm_memory.buf)
         self.read_flag = shm_package["read_flag"]  # flag is incremented, next data is read
         self.read_lock = shm_package["read_lock"]
         self.write_flag = shm_package["write_flag"]  # data is written, next flag is incremented
@@ -160,6 +160,7 @@ class AudioReceiver(asyncio.DatagramProtocol):
                 data = np.frombuffer(data, dtype=np.float32).reshape(
                     (self.main_server.received_audio_buffer_size, self.main_server.audio_chunk_size))
                 self.main_server.user_sockets[i].received_audio_buffer.put(data, regardless=True)
+                print(f"Received audio from {addr}")
                 break
 
 
@@ -193,12 +194,15 @@ class MainServer:
     :ivar max_users: the maximal number of users server can handle simultaneously
     :type max_users: int"""
 
-    def __init__(self, config_file: str, downlink_buffers_packages: list[dict],
+    def __init__(self, config_file: str | dict, downlink_buffers_packages: list[dict],
                  uplink_buffers_packages: list[dict]):
 
         # configuration parameters
-        with open(config_file, "r", encoding="utf-8") as config_json:
-            config = json.load(config_json)
+        if isinstance(config_file, str):
+            with open(config_file, "r", encoding="utf-8") as config_json:
+                config = json.load(config_json)
+        else:
+            config = config_file
         check_config(config)
 
         self.max_users = config["max_users"]
@@ -218,7 +222,7 @@ class MainServer:
         self.loop = None
 
         self.__RUN = False
-        self.__READY = False
+        self.__STATE = "off"
 
     def is_running(self) -> bool:
         """Checks if server is running"""
@@ -227,20 +231,21 @@ class MainServer:
     def stop(self) -> None:
         self.__RUN = False
 
-    def is_stopped(self) -> bool:
+    def state(self) -> str:
         """Checks if server is stopped correctly"""
-        return self.__READY
+        return self.__STATE
 
     async def initiate_server(self) -> None:
         """This function is called once when the server starts.
         :return None:"""
-        print("Server started")
-        self.__RUN = True
-        self.__READY = False
+        self.__STATE = "startup"
         transport, _ = await self.loop.create_datagram_endpoint(
             lambda: AudioReceiver(self),
             local_addr=(self.ip_address, self.communication_port))
         self.udp_transport = transport
+        self.__RUN = True
+        self.__STATE = "on"
+        print("Server started")
         # self.loop.create_task(LoadObserver(self))
         # for testing (start)
         # self.add_user(("127.0.0.1", 9100))
@@ -260,9 +265,10 @@ class MainServer:
     async def close_server(self) -> None:
         """This function is called once when the server shuts down.
         :return None:"""
+        self.__STATE = "shutdown"
         if self.udp_transport is not None:
             self.udp_transport.close()
-        self.__READY = True
+        self.__STATE = "off"
         print("Server closed")
 
     async def run(self, loop: asyncio.AbstractEventLoop) -> None:

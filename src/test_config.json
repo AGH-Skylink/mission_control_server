@@ -6,6 +6,6 @@
     "whitelist": ["127.0.0.1", "192.168.0.19", "192.168.0.18", "192.168.0.26"],
     "remote_communication_port": 9001,
     "audio_chunk_size": 1024,
-    "transmitted_audio_buffer_size":  10,
-    "received_audio_buffer_size":  10
+    "transmitted_audio_buffer_size":  3,
+    "received_audio_buffer_size":  3
 }

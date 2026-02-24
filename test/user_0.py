@@ -13,14 +13,14 @@ samplerate = 44100
 blocksize = 1024
 channels = 1
 
-shm_name = "wnsm_07306884"
+"""shm_name = "wnsm_07306884"
 shm_controller = ""
 shm = shared_memory.SharedMemory(create=False, name=shm_name, size=24)
 print(shm.name)
 shm_array = np.ndarray((3,2), dtype=np.float32, buffer=shm.buf)
 print(shm_array.base)
 print(shm_array)
-shm_array[0,0] = 2.0
+shm_array[0,0] = 2.0"""
 
 
 def main():
