@@ -22,15 +22,15 @@ def ring_buffer_package(buffer_size: int, frame_size: int, dtype=np.float32):
 
 uplink_buffers_packages, uplink_buffers_shm = [], []
 for i in range(2):
-    package, shm = ring_buffer_package(BUFFER_SIZE, FRAME_SIZE, np.float32)
-    uplink_buffers_packages.append(package)
-    uplink_buffers_shm.append(shm)
+    up_package, up_shm = ring_buffer_package(BUFFER_SIZE, FRAME_SIZE, np.float32)
+    uplink_buffers_packages.append(up_package)
+    uplink_buffers_shm.append(up_shm)
 
 downlink_buffers_packages, downlink_buffers_shm = [], []
 for i in range(1):
-    package, shm = ring_buffer_package(BUFFER_SIZE, FRAME_SIZE, np.float32)
-    downlink_buffers_packages.append(package)
-    downlink_buffers_shm.append(shm)
+    down_package, down_shm = ring_buffer_package(BUFFER_SIZE, FRAME_SIZE, np.float32)
+    downlink_buffers_packages.append(down_package)
+    downlink_buffers_shm.append(down_shm)
 
 main_server = MainServer("src/test_config.json", downlink_buffers_packages, uplink_buffers_packages)
 
@@ -49,22 +49,24 @@ async def lifespan(fast_api_app: FastAPI):
         downlink_buffers_shm[j].unlink()
 
 
-
 app = FastAPI(title="Mission Control Server API", version="0.1.0", lifespan=lifespan)
 
 
 # TODO: add a few subcategories, like config, users, etc.
 @app.get("/state/tablets")
 async def get_users():
-    tablets = []
-    for socket in main_server.user_sockets:
-        if socket.is_active():
-            tablets.append({"ip_address": socket.ip_address, "port": socket.port, "name": socket.name})
-        await asyncio.sleep(0)
-    return {
-        "ok": True,
-        "tablets": tablets
-    }
+    try:
+        tablets = []
+        for socket in main_server.user_sockets:
+            if socket.is_active():
+                tablets.append({"ip_address": socket.ip_address, "port": socket.port, "name": socket.name})
+            await asyncio.sleep(0)
+        return {
+            "ok": True,
+            "tablets": tablets
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/tablet/add/{ip_address}")
@@ -74,8 +76,8 @@ def add_user(ip_address: str, port: int | None = None) -> dict:
             main_server.add_user((ip_address, main_server.remote_communication_port))
         else:
             main_server.add_user((ip_address, port))
-    except OverflowError:
-        return {"ok": False}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
     return {"ok": True}
 
 
@@ -86,9 +88,9 @@ def kick_user(ip_address: str, port: int | None = None) -> dict:
             main_server.remove_user((ip_address, main_server.remote_communication_port))
         else:
             main_server.remove_user((ip_address, port))
-    except KeyError:
-        return {"ok": False}
-    return {"ok": True}
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 """@app.post("/tablet/priority/{ip_address}/{priority}")
@@ -106,26 +108,35 @@ def change_priority(ip_address: str, priority: int) -> dict:
 
 @app.post("/start")
 async def start_server():
-    if main_server.state() != "off":
-        return {"ok": False}
-    loop = asyncio.get_running_loop()
-    asyncio.create_task(main_server.run(loop))
-    return {"ok": True}
+    try:
+        if main_server.state() != "off":
+            return {"ok": False, "error": "Server is already running"}
+        loop = asyncio.get_running_loop()
+        asyncio.create_task(main_server.run(loop))
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/stop")
 def stop_server():
-    if main_server.state() != "on":
-        return {"ok": False}
-    main_server.stop()
-    return {"ok": True}
+    try:
+        if main_server.state() != "on":
+            return {"ok": False, "error": "Server is already stopped"}
+        main_server.stop()
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 
 @app.post("/restart")
 async def restart_server():
-    if main_server.state() != "on":
-        return {"ok": False}
-    main_server.stop()
-    loop = asyncio.get_running_loop()
-    asyncio.create_task(main_server.run(loop))
-    return {"ok": True}
+    try:
+        if main_server.state() != "on":
+            return {"ok": False, "error": "Server is already stopped"}
+        main_server.stop()
+        loop = asyncio.get_running_loop()
+        asyncio.create_task(main_server.run(loop))
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}

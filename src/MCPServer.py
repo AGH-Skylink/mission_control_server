@@ -1,61 +1,6 @@
 import asyncio
 import json
 import numpy as np
-import multiprocessing as mp
-from multiprocessing import shared_memory
-
-
-class RingBuffer:
-    def __init__(self, shm_package: dict):
-        self.buffer_size = shm_package["buffer_size"]
-        self.frame_size = shm_package["frame_size"]
-        self.shm_memory = shared_memory.SharedMemory(name=shm_package["memory_name"])
-        self.dtype = shm_package["dtype"]
-        self.memory = np.ndarray((self.buffer_size, self.frame_size), dtype=self.dtype, buffer=self.shm_memory.buf)
-        self.read_flag = shm_package["read_flag"]  # flag is incremented, next data is read
-        self.read_lock = shm_package["read_lock"]
-        self.write_flag = shm_package["write_flag"]  # data is written, next flag is incremented
-        self.write_lock = shm_package["write_lock"]
-        self.reset()
-
-    def reset(self) -> None:
-        with self.write_lock:
-            with self.read_lock:
-                self.read_flag = 0
-                self.write_flag = 1
-
-    def memory_name(self) -> str:
-        return self.shm_memory.name
-
-    def empty(self) -> bool:
-        with self.write_lock:
-            with self.read_lock:
-                return self.write_flag == (self.read_flag + 1) % self.buffer_size
-
-    def full(self) -> bool:
-        with self.write_lock:
-            with self.read_lock:
-                # print(self.write_flag, self.read_flag)
-                return self.read_flag == self.write_flag
-
-    def get(self) -> np.ndarray:
-        if self.empty():
-            raise Exception(f"Buffer empty")
-        with self.read_lock:
-            self.read_flag = (self.read_flag + 1) % self.buffer_size
-            print(self.read_flag)
-        memory_copy = self.memory[self.read_flag, :].copy()
-        return memory_copy
-
-    def put(self, data: np.ndarray, regardless: bool = False) -> None:
-        if self.full():
-            if regardless:
-                self.memory[self.read_flag, :] = data
-                return
-            raise Exception(f"Buffer full")
-        self.memory[self.read_flag, :] = data
-        with self.write_lock:
-            self.write_flag = (self.write_flag + 1) % self.buffer_size
 
 
 class ServerUserSocket:
@@ -162,7 +107,7 @@ class AudioReceiver(asyncio.DatagramProtocol):
             if self.main_server.user_sockets[i].udp_address() == addr:
                 data = np.frombuffer(data, dtype=np.float32)
                 self.main_server.user_sockets[i].received_audio_buffer.put(data, regardless=True)
-                #print(f"Received audio from {addr}")
+                # print(f"Received audio from {addr}")
                 break
 
 
@@ -181,6 +126,7 @@ async def AudioTester(main_server: MainServer, i: int, j: int) -> None:
             main_server.transmitted_audio_buffers[j].put(data, regardless=True)
         await asyncio.sleep(0)
     print(f"AudioTester closed")
+
 
 """async def LoadObserver(main_server: MainServer) -> None:
     Monitors server load
@@ -224,15 +170,15 @@ class MainServer:
         self.udp_transport = None
         self.loop = None
 
-        self.__RUN = False
+        self.__STOP = asyncio.Event()
         self.__STATE = "off"
 
     def is_running(self) -> bool:
         """Checks if server is running"""
-        return self.__RUN
+        return not self.__STOP.is_set()
 
     def stop(self) -> None:
-        self.__RUN = False
+        self.__STOP.set()
 
     def state(self) -> str:
         """Checks if server is stopped correctly"""
@@ -241,17 +187,17 @@ class MainServer:
     async def initiate_server(self) -> None:
         """This function is called once when the server starts.
         :return None:"""
+        print("Server started")
         self.__STATE = "startup"
         transport, _ = await self.loop.create_datagram_endpoint(
             lambda: AudioReceiver(self),
             local_addr=(self.ip_address, self.communication_port))
         self.udp_transport = transport
         self.loop.create_task(AudioTransmitter(self))
-        self.__RUN = True
+        self.__STOP.clear()
         self.__STATE = "on"
-        print("Server started")
-        # self.loop.create_task(LoadObserver(self))
         # for testing (start)
+        # self.loop.create_task(LoadObserver(self))
         # self.add_user(("127.0.0.1", 9100))
         # self.add_user(("127.0.0.1", 9101))
         self.loop.create_task(AudioTester(self, 0, 0))
@@ -261,10 +207,10 @@ class MainServer:
         # self.remove_user(("127.0.0.1", 9101))
         # for testing (end)
 
-    async def main_server_loop(self) -> None:
-        """This function is repeated in loop when server is running.
-        :return None:"""
-        pass
+    """async def main_server_loop(self) -> None:
+        This function is repeated in loop when server is running.
+        :return None:
+        pass"""
 
     async def close_server(self) -> None:
         """This function is called once when the server shuts down.
@@ -281,9 +227,7 @@ class MainServer:
         :return None:"""
         self.loop = loop
         await self.initiate_server()
-        while self.__RUN:
-            await self.main_server_loop()
-            await asyncio.sleep(0)
+        await self.__STOP.wait()
         await self.close_server()
 
     def get_user_id(self, udp_address: tuple[str, int]) -> int:
