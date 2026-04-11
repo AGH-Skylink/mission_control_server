@@ -1,55 +1,58 @@
-import websockets
-from websockets.sync.server import serve
-import json
-import numpy as np
-import sounddevice as sd
 import socket
+import numpy as np
+import threading
+import sounddevice as sd
+from core.logger import monitor
+import json
+import os
+from pathlib import Path
 
-#import MCPServer
+def load_tablet_identity(file_name="tablet_config.json"):
+    config_path = Path(__file__).parent / file_name
+    try:
+        with open(config_path, "r") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"tablet_name": f"UNKNOWN_TAB_{os.getpid()}", "server_ip": "127.0.0.1"}
 
+tablet_cfg = load_tablet_identity()
+MY_NAME = tablet_cfg.get("tablet_name", "DEFAULT_TAB")
 
-"""class ServerUser:
-    def __init__(self, ip_addr: str, port: int, websocket: websockets.sync.server.ServerConnection,
-                 server_id: int | None = None, name: str | None = None):
-        self.server_id = server_id
-        self.name = name
-        if (len(ip_addr) < 10 or ip_addr[:10] != "192.168.0.") and ip_addr != "127.0.0.1":
-            raise ValueError(f"Invalid IP address - {ip_addr}")
-        self.ip_address = ip_addr
-        self.udp_address = (ip_addr, port)
-        self.websocket = websocket
+class MCPTabletClient:
+    """
+    Operator Tablet Client Logic.
+    Handles UDP Audio streams and PTT signaling.
+    """
+    def __init__(self, config):
+        self.server_addr = (config["server_ip"], config["audio_port"])
+        self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.is_streaming = False
+        self.chunk_size = 1024
+        monitor.log_event("CLIENT_INIT", {"name": config["tablet_name"]}, message="Client initialized from config")
 
-    def __repr__(self) -> str:
-        return f"({self.name}, {self.ip_address})"
+    def _audio_callback(self, indata, outdata, frames, time, status):
+        """Standard full-duplex callback for sounddevice"""
+        if self.is_streaming:
+            self.udp_sock.sendto(indata.astype(np.float32).tobytes(), self.server_addr)
 
-    def __eq__(self, other) -> bool:
-        return self.ip_address == other.ip_address
+        # In a real scenario, incoming UDP audio would be queued here for playback
+        # For now, this is a placeholder for output processing
+        pass
 
-    def close_websocket(self) -> None:
-        self.websocket.close()
+    def start_ptt(self):
+        self.is_streaming = True
+        print("PTT ACTIVE: Streaming audio...")
+        monitor.log_event("PTT_PRESSED", message="User started transmission")
 
+    def stop_ptt(self):
+        self.is_streaming = False
+        print("PTT IDLE.")
+        monitor.log_event("PTT_RELEASED", message="User stopped transmission")
 
-def client_instruction0(data: str, user: ServerUser) -> None:
-    Instruction 0 - set a user's name
-    :param data: user's new name
-    :type data: str
-    :param user: user object
-    :type user: ServerUser
-    :return: None
-    if not isinstance(data, str):
-        raise TypeError(f"Instruction 0 - data must be str, not {type(data)}")
-    user.name = data
-    print(user)
+    def run_audio_engine(self):
+        with sd.Stream(samplerate=44100, blocksize=self.chunk_size,
+                       dtype='float32', channels=1, callback=self._audio_callback):
+            print("Tablet Audio Engine Online.")
+            threading.Event().wait()
 
-
-def client_instruction1(data: dict, user: ServerUser):
-    Instruction 1 - a PTT request
-    MCPServer.MainServer.MAIN_SERVER.server_request_buffer.put_nowait({"command": 1, "data": data})
-
-
-def client_instruction2(data: str, user: ServerUser):
-    Instruction 2 - test ping
-    return data
-
-
-DEFAULT_CLIENT_COMMAND_SET = [client_instruction0, client_instruction1, client_instruction2]"""
+client = MCPTabletClient(tablet_cfg)
